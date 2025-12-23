@@ -7,5 +7,5 @@ static const u64 ERROR = 256;
 
 #define at(vec, ix) ((unsigned char*) vec)[ix]
 
-#define propogateError(val) if (val == ERROR) return ERROR
 #define panic(expr) if (expr) return ERROR
+#define propogateError(val) panic(val == ERROR)

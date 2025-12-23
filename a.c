@@ -5,26 +5,36 @@
 #include<string.h>
 #include<unistd.h>
 
-static const char* BANNER = "a (c) 2025 Caitanya Durley";
+static const char* BANNER = "arraylang (c) 2025 Caitanya Durley";
 static const size_t MAX_LINE_LENGTH = 99;
 static char* line;
 
-u64 allocate(u64 length) {
+// Memory management
+
+u64 allocate(unsigned char length) {
     unsigned char *v = malloc(length + 2);
     *v = 0; // ref count
     v++;
-    *v = length; // max length is limited by u to 127
+    *v = length; // length
     v++;
     return (u64) v;
 }
+
+// Type wrangling
 
 bool isAtom(u64 x) {
     return x < 256;
 }
 
+int atomToInt(u64 x) {
+    return (int) x < 128 ? x : x - 256;
+}
+
+// Verb definitions
+
 u64 count(u64 x) {
     if (isAtom(x)) {
-        return ERROR;
+        return 1;
     }
     return at(x, -1);
 }
@@ -42,9 +52,11 @@ u64 neg(u64 x) {
     return out;
 }
 
-int atomToInt(u64 x) {
-    return (int) x < 128 ? x : x - 256;
-}
+static const char* VERBS = " #-";
+static const u64 (*monadics[])(u64) = {0, count, neg};
+static const u64 (*dyadics[])(u64, u64) = {0, 0, 0};
+
+// Output formatting
 
 void print(u64 x) {
     if (isAtom(x)) {
@@ -55,20 +67,18 @@ void print(u64 x) {
         printf("ERROR\n");
         return;
     }
-    printf("%s", "[");
+    printf("[");
     for (int i = 0; i < count(x) - 1; i++) {
-        printf("%d%s", atomToInt(at(x, i)), ", ");
+        printf("%d, ", atomToInt(at(x, i)));
     }
-    printf("%d%s\n", atomToInt(at(x, count(x) - 1)), "]");
+    printf("%d]\n", atomToInt(at(x, count(x) - 1)));
 }
 
-static const char* verbs = " #-";
-static const u64 (*monadics[])(u64) = {0, count, neg};
-static const u64 (*dyadics[])(u64, u64) = {0, 0, 0};
+// Input parsing
 
 u64 parseVerb(char v) {
-    // return ix of v in verbs or 0 if dne
-    return (strchr(verbs, v) ?: verbs) - verbs;
+    // return ix of v in VERBS or 0 if dne
+    return (strchr(VERBS, v) ?: VERBS) - VERBS;
 }
 
 u64 evalNoun(char c) {
