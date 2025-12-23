@@ -20,6 +20,10 @@ u64 allocate(unsigned char length) {
     return (u64) v;
 }
 
+void copy(u64 from, u64 to, unsigned char num_bytes) {
+    memcpy((unsigned char*) to, (unsigned char*) from, num_bytes);
+}
+
 // Type wrangling
 
 bool isAtom(u64 x) {
@@ -39,6 +43,23 @@ u64 count(u64 x) {
     return at(x, -1);
 }
 
+u64 enlist(u64 x) {
+    // TODO: nested lists currently broken since pointer
+    // is bigger than 1 byte
+    u64 out = allocate(1);
+    at(out, 0) = x;
+    return out;
+}
+
+u64 join(u64 x, u64 y) {
+    x = isAtom(x) ? enlist(x) : x;
+    y = isAtom(y) ? enlist(y) : y;
+    u64 out = allocate(count(x) + count(y));
+    copy(x, out, count(x));
+    copy(y, out + count(x), count(y));
+    return out;
+}
+
 u64 neg(u64 x) {
     if (isAtom(x)) {
         // get the underflowed long back to < 256 so it
@@ -52,26 +73,28 @@ u64 neg(u64 x) {
     return out;
 }
 
-static const char* VERBS = " #-";
-static const u64 (*monadics[])(u64) = {0, count, neg};
-static const u64 (*dyadics[])(u64, u64) = {0, 0, 0};
+static const char* VERBS = " #-,";
+static const u64 (*monadics[])(u64) = {0, count, neg, enlist};
+static const u64 (*dyadics[])(u64, u64) = {0, 0, 0, join};
 
 // Output formatting
 
 void print(u64 x) {
     if (isAtom(x)) {
-        printf("%d\n", atomToInt(x));
+        printf("%d", atomToInt(x));
         return;
     }
     if (x == ERROR) {
-        printf("ERROR\n");
+        printf("ERROR");
         return;
     }
     printf("[");
     for (int i = 0; i < count(x) - 1; i++) {
-        printf("%d, ", atomToInt(at(x, i)));
+        print(at(x, i));
+        printf(", ");
     }
-    printf("%d]\n", atomToInt(at(x, count(x) - 1)));
+    print(at(x, count(x) - 1));
+    printf("]");
 }
 
 // Input parsing
@@ -113,7 +136,7 @@ u64 eval(char *s) {
 }
 
 bool readline(void) {
-    printf("a) ");
+    printf("\na) ");
     fflush(stdout);
     ssize_t num_bytes = read(0, line, MAX_LINE_LENGTH);
     if (-1 == num_bytes) {
