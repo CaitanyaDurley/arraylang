@@ -1,7 +1,6 @@
 #include"a.h"
 #include<stdio.h>
 #include<stdlib.h>
-#include<stdbool.h>
 #include<string.h>
 #include<unistd.h>
 
@@ -11,107 +10,169 @@ static char* line;
 
 // Memory management
 
-u64 allocate(unsigned char length) {
-    unsigned char *v = malloc(length + 2);
-    *v = 0; // ref count
-    v++;
-    *v = length; // length
-    v++;
-    return (u64) v;
+size_t typeSize(signed char type) {
+    switch (abs(type)) {
+        case 0:
+            return sizeof(k*);
+        case 1:
+            return sizeof(int);
+        case 2:
+            return sizeof(char);
+    }
 }
 
-void copy(u64 from, u64 to, unsigned char num_bytes) {
-    memcpy((unsigned char*) to, (unsigned char*) from, num_bytes);
+k allocate(unsigned long length, unsigned char type) {
+    k out;
+    out.type = type;
+    out.error = false;
+    out.n = length;
+    out.bytes = malloc(length * typeSize(type));
+    return out;
+}
+
+unsigned long length(k x) {
+    return x.type < 0 ? 1 : x.n;
+}
+
+k createString(char* s) {
+    k out;
+    out.error = false;
+    out.n = strlen(s);
+    out.bytes = s;
+    return out;
+}
+
+void copy(k from, k to, unsigned long offset) {
+    size_t num_bytes = from.n * typeSize(from.type);
+    memcpy(to.bytes + offset * typeSize(to.type), from.bytes, num_bytes);
 }
 
 // Type wrangling
 
-bool isAtom(u64 x) {
-    return x < 256;
+bool isAtom(k x) {
+    return x.type < 0;
 }
 
-int atomToInt(u64 x) {
-    return (int) x < 128 ? x : x - 256;
+k createInt(int x) {
+    k out;
+    out.error = false;
+    out.type = -1;
+    out.i = x;
+    return out;
+}
+
+k createError(char* message) {
+    k out = createString(message);
+    out.error = true;
+    return out;
 }
 
 // Verb definitions
 
-u64 count(u64 x) {
-    if (isAtom(x)) {
-        return 1;
-    }
-    return at(x, -1);
+k count(k x) {
+    return createInt(length(x));
 }
 
-u64 enlist(u64 x) {
-    // TODO: nested lists currently broken since pointer
-    // is bigger than 1 byte
-    u64 out = allocate(1);
-    at(out, 0) = x;
+k enlist(k x) {
+    unsigned int t = x.type < 0 ? -x.type : 0;
+    k out = allocate(1, t);
+    switch (out.type) {
+        case 0:
+            // TODO: out is pointing to the copied struct (x) not the original
+            // TODO: ref counting
+            kAt(out, 0) = &x;
+            break;
+        case 1:
+            intAt(out, 0) = x.i;
+            break;
+        case 2:
+            out.bytes[0] = x.c;
+            break;
+    }
     return out;
 }
 
-u64 join(u64 x, u64 y) {
+k join(k x, k y) {
+    if (abs(x.type) != abs(y.type)) {
+        return createError("Can't join mismatched types");
+    }
     x = isAtom(x) ? enlist(x) : x;
     y = isAtom(y) ? enlist(y) : y;
-    u64 out = allocate(count(x) + count(y));
-    copy(x, out, count(x));
-    copy(y, out + count(x), count(y));
+    k out = allocate(length(x) + length(y), x.type);
+    copy(x, out, 0);
+    copy(y, out, length(x));
     return out;
 }
 
-u64 neg(u64 x) {
+k neg(k x) {
+    if (abs(x.type) != 1) {
+        return createError("Can't negate non-numeric type");
+    }
     if (isAtom(x)) {
-        // get the underflowed long back to < 256 so it
-        // is recognised as an atom
-        return (unsigned char) -x;
+        x.i = -x.i;
+        return x;
     };
-    u64 out = allocate(count(x));
-    for (int i = 0; i < count(x); i++) {
-        at(out, i) = -at(x, i);
+    // TODO: reuse x if refcount allows
+    k out = allocate(length(x), x.type);
+    for (int i = 0; i < length(x); i++) {
+        intAt(out, i) = -intAt(x, i);
     }
     return out;
 }
 
 static const char* VERBS = " #-,";
-static const u64 (*monadics[])(u64) = {0, count, neg, enlist};
-static const u64 (*dyadics[])(u64, u64) = {0, 0, 0, join};
+static const k (*monadics[])(k) = {0, count, neg, enlist};
+static const k (*dyadics[])(k, k) = {0, 0, 0, join};
 
 // Output formatting
 
-void print(u64 x) {
-    if (isAtom(x)) {
-        printf("%d", atomToInt(x));
+void print(k x) {
+    if (x.error) {
+        printf("ERROR: %s", (char*) x.bytes);
         return;
     }
-    if (x == ERROR) {
-        printf("ERROR");
+    if (x.type == -1) {
+        printf("%d", x.i);
+        return;
+    }
+    if (x.type == -2) {
+        printf("\"%c\"", x.c);
+        return;
+    }
+    if (x.type == 2) {
+        printf("\"%s\"", (char*) x.bytes);
         return;
     }
     printf("[");
-    for (int i = 0; i < count(x) - 1; i++) {
-        print(at(x, i));
-        printf(", ");
+    unsigned long n = length(x);
+    for (int i = 0; i < n; i++) {
+        switch (x.type) {
+            case 0:
+                print(*kAt(x, i));
+                break;
+            case 1:
+                printf("%d", intAt(x, i));
+                break;
+        }
+        printf(i == n - 1 ? "]" : ", ");
     }
-    print(at(x, count(x) - 1));
-    printf("]");
 }
 
 // Input parsing
 
-u64 parseVerb(char v) {
+unsigned char parseVerb(char v) {
     // return ix of v in VERBS or 0 if dne
     return (strchr(VERBS, v) ?: VERBS) - VERBS;
 }
 
-u64 evalNoun(char c) {
+k evalNoun(char c) {
     if (c < '0' || c > '9') {
-        return ERROR;
+        return createError("Unrecognised noun");
     }
-    return c - '0';
+    return createInt(c - '0');
 }
 
-u64 eval(char *s) {
+k eval(char *s) {
     char *t = s;
     char i = s[0];
     t++;
@@ -119,19 +180,19 @@ u64 eval(char *s) {
         // end of tape => i must be a noun
         return evalNoun(i);
     }
-    u64 verb = parseVerb(i);
+    unsigned char verb = parseVerb(i);
     if (verb) {
-        u64 right = eval(t);
+        k right = eval(t);
         propogateError(right);
         return monadics[verb](right);
     }
     // i must be a noun, and t should be a verb
-    u64 right = eval(t + 1);
+    k right = eval(t + 1);
     propogateError(right);
-    u64 left = evalNoun(i);
+    k left = evalNoun(i);
     propogateError(left);
     verb = parseVerb(*t);
-    panic(!verb);
+    if (!verb) return createError("Expected verb");
     return dyadics[verb](left, right);
 }
 
