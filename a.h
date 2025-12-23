@@ -5,6 +5,12 @@
 
 #define propogateError(x) if (x->error) return x
 
+enum type {
+    mixed,
+    integer,
+    character,
+};
+
 typedef struct k {
     signed char type;
     unsigned int refcount;

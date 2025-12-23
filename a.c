@@ -12,11 +12,11 @@ static char* line;
 
 size_t typeSize(signed char type) {
     switch (abs(type)) {
-        case 0:
+        case mixed:
             return sizeof(k);
-        case 1:
+        case integer:
             return sizeof(int);
-        case 2:
+        case character:
             return sizeof(char);
     }
 }
@@ -80,14 +80,14 @@ k enlist(k x) {
     unsigned int t = x->type < 0 ? -x->type : 0;
     k out = createVector(1, t);
     switch (out->type) {
-        case 0:
+        case mixed:
             // TODO: ref counting
             kAt(out, 0) = x;
             break;
-        case 1:
+        case integer:
             intAt(out, 0) = x->i;
             break;
-        case 2:
+        case character:
             out->bytes[0] = x->c;
             break;
     }
@@ -107,7 +107,7 @@ k join(k x, k y) {
 }
 
 k neg(k x) {
-    if (abs(x->type) != 1) {
+    if (abs(x->type) != integer) {
         return createError("Can't negate non-numeric type");
     }
     if (isAtom(x)) {
@@ -132,15 +132,15 @@ void print(k x) {
         printf("ERROR: %s", (char*) x->bytes);
         return;
     }
-    if (x->type == -1) {
+    if (x->type == -integer) {
         printf("%d", x->i);
         return;
     }
-    if (x->type == -2) {
+    if (x->type == -character) {
         printf("\"%c\"", x->c);
         return;
     }
-    if (x->type == 2) {
+    if (x->type == character) {
         printf("\"%s\"", (char*) x->bytes);
         return;
     }
@@ -148,10 +148,10 @@ void print(k x) {
     unsigned long n = length(x);
     for (int i = 0; i < n; i++) {
         switch (x->type) {
-            case 0:
+            case mixed:
                 print(kAt(x, i));
                 break;
-            case 1:
+            case integer:
                 printf("%d", intAt(x, i));
                 break;
         }
