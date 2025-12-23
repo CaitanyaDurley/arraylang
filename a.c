@@ -13,7 +13,7 @@ static char* line;
 size_t typeSize(signed char type) {
     switch (abs(type)) {
         case 0:
-            return sizeof(k*);
+            return sizeof(k);
         case 1:
             return sizeof(int);
         case 2:
@@ -21,49 +21,52 @@ size_t typeSize(signed char type) {
     }
 }
 
-k allocate(unsigned long length, unsigned char type) {
-    k out;
-    out.type = type;
-    out.error = false;
-    out.n = length;
-    out.bytes = malloc(length * typeSize(type));
+k create(signed char type) {
+    k out = malloc(sizeof(struct k));
+    out->type = type;
+    out->refcount = 1;
+    out->error = false;
+    return out;
+}
+
+k createVector(unsigned long length, unsigned char type) {
+    k out = create(type);
+    out->n = length;
+    out->bytes = malloc(length * typeSize(type));
     return out;
 }
 
 unsigned long length(k x) {
-    return x.type < 0 ? 1 : x.n;
+    return x->type < 0 ? 1 : x->n;
 }
 
 k createString(char* s) {
-    k out;
-    out.error = false;
-    out.n = strlen(s);
-    out.bytes = s;
+    k out = create(2);
+    out->n = strlen(s);
+    out->bytes = s;
     return out;
 }
 
 void copy(k from, k to, unsigned long offset) {
-    size_t num_bytes = from.n * typeSize(from.type);
-    memcpy(to.bytes + offset * typeSize(to.type), from.bytes, num_bytes);
+    size_t num_bytes = from->n * typeSize(from->type);
+    memcpy(to->bytes + offset * typeSize(to->type), from->bytes, num_bytes);
 }
 
 // Type wrangling
 
 bool isAtom(k x) {
-    return x.type < 0;
+    return x->type < 0;
 }
 
 k createInt(int x) {
-    k out;
-    out.error = false;
-    out.type = -1;
-    out.i = x;
+    k out = create(-1);
+    out->i = x;
     return out;
 }
 
 k createError(char* message) {
     k out = createString(message);
-    out.error = true;
+    out->error = true;
     return out;
 }
 
@@ -74,46 +77,44 @@ k count(k x) {
 }
 
 k enlist(k x) {
-    unsigned int t = x.type < 0 ? -x.type : 0;
-    k out = allocate(1, t);
-    switch (out.type) {
+    unsigned int t = x->type < 0 ? -x->type : 0;
+    k out = createVector(1, t);
+    switch (out->type) {
         case 0:
-            // TODO: out is pointing to the copied struct (x) not the original
             // TODO: ref counting
-            kAt(out, 0) = &x;
+            kAt(out, 0) = x;
             break;
         case 1:
-            intAt(out, 0) = x.i;
+            intAt(out, 0) = x->i;
             break;
         case 2:
-            out.bytes[0] = x.c;
+            out->bytes[0] = x->c;
             break;
     }
     return out;
 }
 
 k join(k x, k y) {
-    if (abs(x.type) != abs(y.type)) {
+    if (abs(x->type) != abs(y->type)) {
         return createError("Can't join mismatched types");
     }
     x = isAtom(x) ? enlist(x) : x;
     y = isAtom(y) ? enlist(y) : y;
-    k out = allocate(length(x) + length(y), x.type);
+    k out = createVector(length(x) + length(y), x->type);
     copy(x, out, 0);
     copy(y, out, length(x));
     return out;
 }
 
 k neg(k x) {
-    if (abs(x.type) != 1) {
+    if (abs(x->type) != 1) {
         return createError("Can't negate non-numeric type");
     }
     if (isAtom(x)) {
-        x.i = -x.i;
-        return x;
+        return createInt(-x->i);
     };
     // TODO: reuse x if refcount allows
-    k out = allocate(length(x), x.type);
+    k out = createVector(length(x), x->type);
     for (int i = 0; i < length(x); i++) {
         intAt(out, i) = -intAt(x, i);
     }
@@ -127,28 +128,28 @@ static const k (*dyadics[])(k, k) = {0, 0, 0, join};
 // Output formatting
 
 void print(k x) {
-    if (x.error) {
-        printf("ERROR: %s", (char*) x.bytes);
+    if (x->error) {
+        printf("ERROR: %s", (char*) x->bytes);
         return;
     }
-    if (x.type == -1) {
-        printf("%d", x.i);
+    if (x->type == -1) {
+        printf("%d", x->i);
         return;
     }
-    if (x.type == -2) {
-        printf("\"%c\"", x.c);
+    if (x->type == -2) {
+        printf("\"%c\"", x->c);
         return;
     }
-    if (x.type == 2) {
-        printf("\"%s\"", (char*) x.bytes);
+    if (x->type == 2) {
+        printf("\"%s\"", (char*) x->bytes);
         return;
     }
     printf("[");
     unsigned long n = length(x);
     for (int i = 0; i < n; i++) {
-        switch (x.type) {
+        switch (x->type) {
             case 0:
-                print(*kAt(x, i));
+                print(kAt(x, i));
                 break;
             case 1:
                 printf("%d", intAt(x, i));
