@@ -3,8 +3,10 @@
 #include<stdlib.h>
 #include<string.h>
 #include<unistd.h>
+#include<stdbool.h>
 
 static const char* BANNER = "arraylang (c) 2025 Caitanya Durley";
+static char errorString[100];
 static const size_t MAX_LINE_LENGTH = 99;
 static char* line;
 
@@ -16,11 +18,13 @@ bool isAtom(k x) {
 
 size_t typeSize(signed char type) {
     switch (abs(type)) {
-        case mixed:
+        case type_mixed:
             return sizeof(k);
-        case integer:
+        case type_error:
+            return sizeof(error);
+        case type_int:
             return sizeof(int);
-        case character:
+        case type_char:
             return sizeof(char);
     }
 }
@@ -29,12 +33,11 @@ k create(signed char type) {
     k out = malloc(sizeof(struct k));
     out->type = type;
     out->refcount = 1;
-    out->error = false;
     return out;
 }
 
 k createInt(int x) {
-    k out = create(-integer);
+    k out = create(-type_int);
     out->i = x;
     return out;
 }
@@ -47,15 +50,15 @@ k createVector(unsigned long length, unsigned char type) {
 }
 
 k createString(char* s) {
-    k out = create(character);
+    k out = create(type_char);
     out->n = strlen(s);
     out->bytes = s;
     return out;
 }
 
-k createError(char* message) {
-    k out = createString(message);
-    out->error = true;
+k createError(error e) {
+    k out = create(-type_error);
+    out->e = e;
     return out;
 }
 
@@ -81,7 +84,7 @@ void decRefcount(k x) {
 }
 
 void drop(k x) {
-    if (x->type == mixed) {
+    if (x->type == type_mixed) {
         for (unsigned long i = 0; i < length(x); i++) {
             decRefcount(kAt(x, i));
         }
@@ -102,14 +105,14 @@ k enlist(k x) {
     unsigned int t = x->type < 0 ? -x->type : 0;
     k out = createVector(1, t);
     switch (out->type) {
-        case mixed:
+        case type_mixed:
             incRefcount(x);
             kAt(out, 0) = x;
             break;
-        case integer:
+        case type_int:
             intAt(out, 0) = x->i;
             break;
-        case character:
+        case type_char:
             out->bytes[0] = x->c;
             break;
     }
@@ -118,7 +121,8 @@ k enlist(k x) {
 
 k join(k x, k y) {
     if (abs(x->type) != abs(y->type)) {
-        return createError("Can't join mismatched types");
+        sprintf(errorString, "Can't join type %d to type %d", x->type, y->type);
+        return createError(error_type);
     }
     x = isAtom(x) ? enlist(x) : x;
     y = isAtom(y) ? enlist(y) : y;
@@ -129,8 +133,9 @@ k join(k x, k y) {
 }
 
 k neg(k x) {
-    if (abs(x->type) != integer) {
-        return createError("Can't negate non-numeric type");
+    if (abs(x->type) != type_int) {
+        sprintf(errorString, "Can't negate type %d", x->type);
+        return createError(error_type);
     }
     if (isAtom(x)) {
         return createInt(-x->i);
@@ -149,20 +154,38 @@ static const k (*dyadics[])(k, k) = {0, 0, 0, join};
 
 // Output formatting
 
+void printError(error e) {
+    switch (e) {
+        case error_type:
+            printf("Type error: ");
+            break;
+        case error_length:
+            printf("Length error: ");
+            break;
+        case error_parse:
+            printf("Parse error: ");
+            break;
+        case error_nyi:
+            printf("Not yet implemented error: ");
+            break;
+    }
+    printf("%s", errorString);
+}
+
 void print(k x) {
-    if (x->error) {
-        printf("ERROR: %s", (char*) x->bytes);
+    if (x->type == -type_error) {
+        printError(x->e);
         return;
     }
-    if (x->type == -integer) {
+    if (x->type == -type_int) {
         printf("%d", x->i);
         return;
     }
-    if (x->type == -character) {
+    if (x->type == -type_char) {
         printf("\"%c\"", x->c);
         return;
     }
-    if (x->type == character) {
+    if (x->type == type_char) {
         printf("\"%s\"", (char*) x->bytes);
         return;
     }
@@ -170,10 +193,10 @@ void print(k x) {
     unsigned long n = length(x);
     for (int i = 0; i < n; i++) {
         switch (x->type) {
-            case mixed:
+            case type_mixed:
                 print(kAt(x, i));
                 break;
-            case integer:
+            case type_int:
                 printf("%d", intAt(x, i));
                 break;
         }
@@ -190,20 +213,20 @@ unsigned char parseVerb(char v) {
 
 k evalNoun(char c) {
     if (c < '0' || c > '9') {
-        return createError("Unrecognised noun");
+        sprintf(errorString, "Expected noun, got %c", c);
+        return createError(error_parse);
     }
     return createInt(c - '0');
 }
 
 k eval(char *s) {
-    char *t = s;
-    char i = s[0];
-    t++;
+    char* t = s + 1;
+    char currToken = s[0];
     if (!*t) {
-        // end of tape => i must be a noun
-        return evalNoun(i);
+        // end of tape => currToken must be a noun
+        return evalNoun(currToken);
     }
-    unsigned char verb = parseVerb(i);
+    unsigned char verb = parseVerb(currToken);
     if (verb) {
         k right = eval(t);
         propogateError(right);
@@ -211,13 +234,22 @@ k eval(char *s) {
         decRefcount(right);
         return out;
     }
-    // i must be a noun, and t should be a verb
-    k right = eval(t + 1);
-    propogateError(right);
-    k left = evalNoun(i);
+    // currToken must be a noun, and t should be a verb
+    k left = evalNoun(currToken);
     propogateError(left);
     verb = parseVerb(*t);
-    if (!verb) return createError("Expected verb");
+    if (!verb) {
+        sprintf(errorString, "Expected verb, got %c", *t);
+        return createError(error_parse);
+    }
+    t++;
+    if (!*t) {
+        // dyadic verb with no right noun
+        sprintf(errorString, "Projections unsupported");
+        return createError(error_nyi);
+    }
+    k right = eval(t);
+    propogateError(right);
     k out = dyadics[verb](left, right);
     decRefcount(left);
     decRefcount(right);
