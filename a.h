@@ -10,6 +10,7 @@ typedef enum {
     error_length,
     error_parse,
     error_nyi,
+    error_undefined,
 } error;
 
 typedef struct k {

@@ -9,6 +9,7 @@ static const char* BANNER = "arraylang (c) 2025 Caitanya Durley";
 static char errorString[100];
 static const size_t MAX_LINE_LENGTH = 99;
 static char* line;
+static k variables[26];
 
 // Memory management and type wrangling
 
@@ -168,6 +169,9 @@ void printError(error e) {
         case error_nyi:
             printf("Not yet implemented error: ");
             break;
+        case error_undefined:
+            printf("Undefined error: ");
+            break;
     }
     printf("%s", errorString);
 }
@@ -211,7 +215,21 @@ unsigned char parseVerb(char v) {
     return (strchr(VERBS, v) ?: VERBS) - VERBS;
 }
 
+bool isVarName(char c) {
+    return c >= 'a' && c <= 'z';
+}
+
 k evalNoun(char c) {
+    if (isVarName(c)) {
+        k variable = variables[c - 'a'];
+        if (variable) {
+            incRefcount(variable);
+            return variable;
+        } else {
+            sprintf(errorString, "%c", c);
+            return createError(error_undefined);
+        }
+    }
     if (c < '0' || c > '9') {
         sprintf(errorString, "Expected noun, got %c", c);
         return createError(error_parse);
@@ -256,6 +274,27 @@ k eval(char *s) {
     return out;
 }
 
+k evalAssignment(char* s) {
+    char varName = s[0];
+    if (!isVarName(varName)) {
+        sprintf(errorString, "Invalid variable name: %c", varName);
+        return createError(error_parse);
+    }
+    unsigned int varIx = varName - 'a';
+    if (!*(s + 2)) {
+        sprintf(errorString, "No value to assign");
+        return createError(error_parse);
+    }
+    k val = eval(s + 2);
+    propogateError(val);
+    incRefcount(val);
+    if (variables[varIx]) {
+        decRefcount(variables[varIx]);
+    }
+    variables[varIx] = val;
+    return val;
+}
+
 bool readline(void) {
     printf("\na) ");
     fflush(stdout);
@@ -267,13 +306,30 @@ bool readline(void) {
     return true;
 }
 
+void debug(void) {
+    for (int i = 0; i < 26; i++) {
+        if (variables[i]) {
+            printf("%c: type=%d, refcount=%u\n", 'a'+i, variables[i]->type, variables[i]->refcount);
+        }
+    }
+}
+
 int main(int argc, char* argv[]) {
     printf("%s\n", BANNER);
     line = malloc(MAX_LINE_LENGTH + 1);
     while (readline()) {
         if (!*line) continue;
         if (*line == '/') continue;
-        k result = eval(line);
+        if (0 == strcmp(line, "debug")) {
+            debug();
+            continue;
+        }
+        k result;
+        if (line[1] == ':') {
+            result = evalAssignment(line);
+        } else {
+            result = eval(line);
+        }
         print(result);
         decRefcount(result);
     }
