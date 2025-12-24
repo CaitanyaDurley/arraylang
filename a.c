@@ -8,7 +8,11 @@ static const char* BANNER = "arraylang (c) 2025 Caitanya Durley";
 static const size_t MAX_LINE_LENGTH = 99;
 static char* line;
 
-// Memory management
+// Memory management and type wrangling
+
+bool isAtom(k x) {
+    return x->type < 0;
+}
 
 size_t typeSize(signed char type) {
     switch (abs(type)) {
@@ -29,6 +33,12 @@ k create(signed char type) {
     return out;
 }
 
+k createInt(int x) {
+    k out = create(-integer);
+    out->i = x;
+    return out;
+}
+
 k createVector(unsigned long length, unsigned char type) {
     k out = create(type);
     out->n = length;
@@ -36,31 +46,10 @@ k createVector(unsigned long length, unsigned char type) {
     return out;
 }
 
-unsigned long length(k x) {
-    return x->type < 0 ? 1 : x->n;
-}
-
 k createString(char* s) {
-    k out = create(2);
+    k out = create(character);
     out->n = strlen(s);
     out->bytes = s;
-    return out;
-}
-
-void copy(k from, k to, unsigned long offset) {
-    size_t num_bytes = from->n * typeSize(from->type);
-    memcpy(to->bytes + offset * typeSize(to->type), from->bytes, num_bytes);
-}
-
-// Type wrangling
-
-bool isAtom(k x) {
-    return x->type < 0;
-}
-
-k createInt(int x) {
-    k out = create(-1);
-    out->i = x;
     return out;
 }
 
@@ -68,6 +57,39 @@ k createError(char* message) {
     k out = createString(message);
     out->error = true;
     return out;
+}
+
+unsigned long length(k x) {
+    return x->type < 0 ? 1 : x->n;
+}
+
+void copy(k from, k to, unsigned long offset) {
+    size_t num_bytes = from->n * typeSize(from->type);
+    memcpy(to->bytes + offset * typeSize(to->type), from->bytes, num_bytes);
+}
+
+void incRefcount(k x) {
+    x->refcount++;
+}
+
+void drop(k x); // forward declaration for decRefcount
+void decRefcount(k x) {
+    x->refcount--;
+    if (0 == x->refcount) {
+        drop(x);
+    }
+}
+
+void drop(k x) {
+    if (x->type == mixed) {
+        for (unsigned long i = 0; i < length(x); i++) {
+            decRefcount(kAt(x, i));
+        }
+    }
+    if (! isAtom(x)) {
+        free(x->bytes);
+    }
+    free(x);
 }
 
 // Verb definitions
@@ -81,7 +103,7 @@ k enlist(k x) {
     k out = createVector(1, t);
     switch (out->type) {
         case mixed:
-            // TODO: ref counting
+            incRefcount(x);
             kAt(out, 0) = x;
             break;
         case integer:
@@ -185,7 +207,9 @@ k eval(char *s) {
     if (verb) {
         k right = eval(t);
         propogateError(right);
-        return monadics[verb](right);
+        k out = monadics[verb](right);
+        decRefcount(right);
+        return out;
     }
     // i must be a noun, and t should be a verb
     k right = eval(t + 1);
@@ -194,7 +218,10 @@ k eval(char *s) {
     propogateError(left);
     verb = parseVerb(*t);
     if (!verb) return createError("Expected verb");
-    return dyadics[verb](left, right);
+    k out = dyadics[verb](left, right);
+    decRefcount(left);
+    decRefcount(right);
+    return out;
 }
 
 bool readline(void) {
@@ -214,7 +241,9 @@ int main(int argc, char* argv[]) {
     while (readline()) {
         if (!*line) continue;
         if (*line == '/') continue;
-        print(eval(line));
+        k result = eval(line);
+        print(result);
+        decRefcount(result);
     }
     free(line);
     return 0;
