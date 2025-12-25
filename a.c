@@ -98,8 +98,27 @@ void drop(k x) {
 
 // Verb definitions
 
+k nyi() {
+    errorString[0] = '\0';
+    return createError(error_nyi);
+}
+
 k count(k x) {
     return createInt(length(x));
+}
+
+k take(k x, k y) {
+    if (x->type != -type_int) {
+        sprintf(errorString, "Non-integer number of items to take");
+        return createError(error_type);
+    }
+    if (x->i < 0) return nyi();
+    unsigned long n = length(y);
+    k out = createVector(abs(x->i), abs(y->type));
+    for (unsigned long i = 0; i < length(out); i++) {
+        intAt(out, i) = isAtom(y) ? y->i : intAt(y, i % n);
+    }
+    return out;
 }
 
 k enlist(k x) {
@@ -133,6 +152,30 @@ k join(k x, k y) {
     return out;
 }
 
+k add(k x, k y) {
+    if (abs(x->type) != type_int || abs(y->type) != type_int) {
+        sprintf(errorString, "Can't add type %d to type %d", x->type, y->type);
+        return createError(error_type);
+    }
+    if (!(isAtom(x) || isAtom(y) || length(x) == length(y))) {
+        sprintf(errorString, "Incompatible lengths: %lu, %lu", length(x), length(y));
+        return createError(error_length);
+    }
+    if (isAtom(x) && isAtom(y)) {
+        return createInt(x->i + y->i);
+    }
+    if (isAtom(x)) {
+        k tmp = x;
+        x = y;
+        y = tmp;
+    }
+    k out = createVector(length(x), type_int);
+    for (unsigned long i = 0; i < length(out); i++) {
+        intAt(out, i) = intAt(x, i) + (isAtom(y) ? y->i : intAt(y, i));
+    }
+    return out;
+}
+
 k neg(k x) {
     if (abs(x->type) != type_int) {
         sprintf(errorString, "Can't negate type %d", x->type);
@@ -149,9 +192,9 @@ k neg(k x) {
     return out;
 }
 
-static const char* VERBS = " #-,";
-static const k (*monadics[])(k) = {0, count, neg, enlist};
-static const k (*dyadics[])(k, k) = {0, 0, 0, join};
+static const char* VERBS = " #-+,";
+static const k (*monadics[])(k) = {nyi, count, neg, nyi, enlist};
+static const k (*dyadics[])(k, k) = {nyi, take, nyi, add, join};
 
 // Output formatting
 
