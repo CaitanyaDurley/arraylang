@@ -200,9 +200,15 @@ k neg(k x) {
     return out;
 }
 
+k sub(k x, k y) {
+    y = neg(y);
+    propogateError(y);
+    return consume(y, add(x, y));
+}
+
 static const char* VERBS = " #-+,";
 static const k (*monadics[])(k) = {nyi, count, neg, nyi, enlist};
-static const k (*dyadics[])(k, k) = {nyi, take, nyi, add, join};
+static const k (*dyadics[])(k, k) = {nyi, take, sub, add, join};
 
 // Output formatting
 
