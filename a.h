@@ -28,3 +28,7 @@ typedef struct k {
 #define kAt(x, ix) ((k*) x->bytes)[ix]
 
 #define propogateError(x) if (x->type == -type_error) return x
+
+#define eachNestedK(x, f) if (x->type == type_mixed) for (unsigned long i = 0; i < length(x); i++) f(kAt(x, i))
+
+#define consume(x, e) ({k out = e; decRefcount(x); out;})

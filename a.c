@@ -10,6 +10,7 @@ static char errorString[100];
 static const size_t MAX_LINE_LENGTH = 99;
 static char* line;
 static k variables[26];
+static unsigned long workspace = 0;
 
 // Memory management and type wrangling
 
@@ -32,6 +33,7 @@ size_t typeSize(signed char type) {
 
 k create(signed char type) {
     k out = malloc(sizeof(struct k));
+    workspace += sizeof(struct k);
     out->type = type;
     out->refcount = 1;
     return out;
@@ -47,6 +49,7 @@ k createVector(unsigned long length, unsigned char type) {
     k out = create(type);
     out->n = length;
     out->bytes = malloc(length * typeSize(type));
+    workspace += length * typeSize(type);
     return out;
 }
 
@@ -85,15 +88,13 @@ void decRefcount(k x) {
 }
 
 void drop(k x) {
-    if (x->type == type_mixed) {
-        for (unsigned long i = 0; i < length(x); i++) {
-            decRefcount(kAt(x, i));
-        }
-    }
+    eachNestedK(x, decRefcount);
     if (! isAtom(x)) {
         free(x->bytes);
+        workspace -= x->n * typeSize(x->type);
     }
     free(x);
+    workspace -= sizeof(struct k);
 }
 
 // Verb definitions
@@ -124,7 +125,7 @@ k take(k x, k y) {
 k enlist(k x) {
     unsigned int t = x->type < 0 ? -x->type : 0;
     k out = createVector(1, t);
-    switch (out->type) {
+    switch (t) {
         case type_mixed:
             incRefcount(x);
             kAt(out, 0) = x;
@@ -144,11 +145,18 @@ k join(k x, k y) {
         sprintf(errorString, "Can't join type %d to type %d", x->type, y->type);
         return createError(error_type);
     }
-    x = isAtom(x) ? enlist(x) : x;
-    y = isAtom(y) ? enlist(y) : y;
-    k out = createVector(length(x) + length(y), x->type);
+    if (isAtom(x)) {
+        x = enlist(x);
+        return consume(x, join(x, y));
+    }
+    if (isAtom(y)) {
+        y = enlist(y);
+        return consume(y, join(x, y));
+    }
+    k out = createVector(x->n + y->n, x->type);
     copy(x, out, 0);
-    copy(y, out, length(x));
+    copy(y, out, x->n);
+    eachNestedK(out, incRefcount);
     return out;
 }
 
@@ -291,9 +299,7 @@ k eval(char *s) {
     if (verb) {
         k right = eval(t);
         propogateError(right);
-        k out = monadics[verb](right);
-        decRefcount(right);
-        return out;
+        return consume(right, monadics[verb](right));
     }
     // currToken must be a noun, and t should be a verb
     k left = evalNoun(currToken);
@@ -311,10 +317,7 @@ k eval(char *s) {
     }
     k right = eval(t);
     propogateError(right);
-    k out = dyadics[verb](left, right);
-    decRefcount(left);
-    decRefcount(right);
-    return out;
+    return consume(left, consume(right, dyadics[verb](left, right)));
 }
 
 k evalAssignment(char* s) {
@@ -350,6 +353,7 @@ bool readline(void) {
 }
 
 void debug(void) {
+    printf("Workspace: %lu\n", workspace);
     for (int i = 0; i < 26; i++) {
         if (variables[i]) {
             printf("%c: type=%d, refcount=%u\n", 'a'+i, variables[i]->type, variables[i]->refcount);
