@@ -3,7 +3,6 @@
 #include<stdlib.h>
 #include<string.h>
 #include<unistd.h>
-#include<stdbool.h>
 
 static const char* BANNER = "arraylang (c) 2025 Caitanya Durley";
 static char errorString[100];
@@ -28,6 +27,10 @@ size_t typeSize(signed char type) {
             return sizeof(int);
         case type_char:
             return sizeof(char);
+        case type_bool:
+            return sizeof(bool);
+        default:
+            unreachable;
     }
 }
 
@@ -42,6 +45,18 @@ k create(signed char type) {
 k createInt(int x) {
     k out = create(-type_int);
     out->i = x;
+    return out;
+}
+
+k createChar(char x) {
+    k out = create(-type_char);
+    out->c = x;
+    return out;
+}
+
+k createBool(bool x) {
+    k out = create(-type_bool);
+    out->b = x;
     return out;
 }
 
@@ -97,6 +112,78 @@ void drop(k x) {
     workspace -= sizeof(struct k);
 }
 
+// K utils
+
+bool areBroadcastable(k x, k y) {
+    if (isAtom(x) || isAtom(y) || length(x) == length(y)) {
+        return true;
+    }
+    sprintf(errorString, "Incompatible lengths: %lu, %lu", length(x), length(y));
+    return false;
+}
+
+bool arePromotable(k x, k y) {
+    // TODO: other type promotion
+    if (abs(x->type) == abs(y->type) || x->type == type_mixed || y->type == type_mixed) {
+        return true;
+    }
+    sprintf(errorString, "Incompatible types: %d, %d", x->type, y->type);
+    return false;
+}
+
+int max(int a, int b) {
+    return a < b ? b : a;
+}
+
+// Callers must ensure x is an array
+k at(k x, unsigned long ix) {
+    switch (x->type) {
+        case type_mixed:
+            return provide(kAt(x, ix));
+        case type_int:
+            return createInt(intAt(x, ix));
+        case type_char:
+            return createChar(charAt(x, ix));
+        case type_bool:
+            return createBool(boolAt(x, ix));
+        default:
+            unreachable;
+    }
+}
+
+// Callers must ensure abs(x->type) == abs(y->type) != 0
+k cmp(k x, k y) {
+    if (isAtom(x) && isAtom(y)) {
+        switch (-x->type) {
+            case type_int:
+                return createBool(x->i == y->i);
+            case type_char:
+                return createBool(x->c == y->c);
+            case type_bool:
+                return createBool(x->b == y->b);
+            default:
+                unreachable;
+        }
+    }
+    k out = createVector(max(length(x), length(y)), type_bool);
+    for (unsigned long i = 0; i < out->n; i++) {
+        switch (abs(x->type)) {
+            case type_int:
+                boolAt(out, i) = (isAtom(x) ? x->i : intAt(x, i)) == (isAtom(y) ? y->i : intAt(y, i));
+                break;
+            case type_char:
+                boolAt(out, i) = (isAtom(x) ? x->c : charAt(x, i)) == (isAtom(y) ? y->c : charAt(y, i));
+                break;
+            case type_bool:
+                boolAt(out, i) = (isAtom(x) ? x->b : boolAt(x, i)) == (isAtom(y) ? y->b : boolAt(y, i));
+                break;
+            default:
+                unreachable;
+        }
+    }
+    return out;
+}
+
 // Verb definitions
 
 k nyi() {
@@ -115,7 +202,7 @@ k take(k x, k y) {
     }
     if (x->i < 0) return nyi();
     unsigned long n = length(y);
-    k out = createVector(abs(x->i), abs(y->type));
+    k out = createVector(x->i, abs(y->type));
     for (unsigned long i = 0; i < length(out); i++) {
         intAt(out, i) = isAtom(y) ? y->i : intAt(y, i % n);
     }
@@ -134,17 +221,19 @@ k enlist(k x) {
             intAt(out, 0) = x->i;
             break;
         case type_char:
-            out->bytes[0] = x->c;
+            charAt(out, 0) = x->c;
             break;
+        case type_bool:
+            boolAt(out, 0) = x->b;
+            break;
+        default:
+            unreachable;
     }
     return out;
 }
 
 k join(k x, k y) {
-    if (abs(x->type) != abs(y->type)) {
-        sprintf(errorString, "Can't join type %d to type %d", x->type, y->type);
-        return createError(error_type);
-    }
+    if (!arePromotable(x, y)) return createError(error_type);
     if (isAtom(x)) {
         x = enlist(x);
         return consume(x, join(x, y));
@@ -165,17 +254,14 @@ k add(k x, k y) {
         sprintf(errorString, "Can't add type %d to type %d", x->type, y->type);
         return createError(error_type);
     }
-    if (!(isAtom(x) || isAtom(y) || length(x) == length(y))) {
-        sprintf(errorString, "Incompatible lengths: %lu, %lu", length(x), length(y));
+    if (!(areBroadcastable(x, y))) {
         return createError(error_length);
     }
     if (isAtom(x) && isAtom(y)) {
         return createInt(x->i + y->i);
     }
     if (isAtom(x)) {
-        k tmp = x;
-        x = y;
-        y = tmp;
+        swap(x, y);
     }
     k out = createVector(length(x), type_int);
     for (unsigned long i = 0; i < length(out); i++) {
@@ -206,9 +292,27 @@ k sub(k x, k y) {
     return consume(y, add(x, y));
 }
 
-static const char* VERBS = " #-+,";
-static const k (*monadics[])(k) = {nyi, count, neg, nyi, enlist};
-static const k (*dyadics[])(k, k) = {nyi, take, sub, add, join};
+k equals(k x, k y) {
+    if (!arePromotable(x, y)) return createError(error_type);
+    if (!areBroadcastable(x, y)) return createError(error_length);
+    if (y->type == type_mixed) {
+        swap(x, y);
+    }
+    if (x->type == type_mixed) {
+        k out = createVector(x->n, type_mixed);
+        k yi;
+        for (unsigned long i = 0; i < x->n; i++) {
+            yi = isAtom(y) ? provide(y) : at(y, i);
+            kAt(out, i) = consume(yi, equals(kAt(x, i), yi));
+        }
+        return out;
+    }
+    return cmp(x, y);
+}
+
+static const char* VERBS = " #-+,=";
+static const k (*monadics[])(k) = {nyi, count, neg, nyi, enlist, nyi};
+static const k (*dyadics[])(k, k) = {nyi, take, sub, add, join, equals};
 
 // Output formatting
 
@@ -229,6 +333,8 @@ void printError(error e) {
         case error_undefined:
             printf("Undefined error: ");
             break;
+        default:
+            unreachable;
     }
     printf("%s", errorString);
 }
@@ -250,6 +356,10 @@ void print(k x) {
         printf("\"%s\"", (char*) x->bytes);
         return;
     }
+    if (x->type == -type_bool) {
+        printf("%s", x->b ? "true" : "false");
+        return;
+    }
     printf("[");
     unsigned long n = length(x);
     for (int i = 0; i < n; i++) {
@@ -260,6 +370,11 @@ void print(k x) {
             case type_int:
                 printf("%d", intAt(x, i));
                 break;
+            case type_bool:
+                printf("%s", boolAt(x, i) ? "true" : "false");
+                break;
+            default:
+                unreachable;
         }
         printf(i == n - 1 ? "]" : ", ");
     }
