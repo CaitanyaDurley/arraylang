@@ -6,8 +6,8 @@
 
 static const char* BANNER = "arraylang (c) 2025 Caitanya Durley";
 static char errorString[100];
-static const size_t MAX_LINE_LENGTH = 99;
-static char* line;
+static char* line = NULL;
+static size_t lineLength = 0;
 static k variables[26];
 static unsigned long workspace = 0;
 
@@ -311,8 +311,8 @@ k equals(k x, k y) {
 }
 
 static const char* VERBS = " #-+,=";
-static const k (*monadics[])(k) = {nyi, count, neg, nyi, enlist, nyi};
-static const k (*dyadics[])(k, k) = {nyi, take, sub, add, join, equals};
+static const k (*monadics[])(k) = {0, count, neg, nyi, enlist, nyi};
+static const k (*dyadics[])(k, k) = {0, take, sub, add, join, equals};
 
 // Output formatting
 
@@ -462,14 +462,13 @@ k evalAssignment(char* s) {
     return val;
 }
 
-bool readline(void) {
-    printf("\na) ");
-    fflush(stdout);
-    ssize_t num_bytes = read(0, line, MAX_LINE_LENGTH);
-    if (-1 == num_bytes) {
+bool readline(FILE* stream) {
+    ssize_t num_chars = getline(&line, &lineLength, stream);
+    if (num_chars <= 0) {
         return false;
     }
-    line[num_bytes - 1] = 0;
+    // clamp the newline
+    line[num_chars - 1] = 0;
     return true;
 }
 
@@ -484,8 +483,13 @@ void debug(void) {
 
 int main(int argc, char* argv[]) {
     printf("%s\n", BANNER);
-    line = malloc(MAX_LINE_LENGTH + 1);
-    while (readline()) {
+    bool batchMode = argc >= 2;
+    FILE* stream = batchMode ? fopen(argv[1], "r") : stdin;
+    if (stream == NULL) {
+        fprintf(stderr, "Couldn't open %s for reading\n", batchMode ? argv[1] : "stdin");
+        return 1;
+    }
+    while (batchMode?:write(1, "a) ", 3), readline(stream)) {
         if (!*line) continue;
         if (*line == '/') continue;
         if (0 == strcmp(line, "debug")) {
@@ -500,7 +504,8 @@ int main(int argc, char* argv[]) {
         }
         print(result);
         decRefcount(result);
+        printf("\n");
     }
-    free(line);
+    fclose(stream);
     return 0;
 }
