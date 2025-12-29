@@ -1,4 +1,5 @@
 #include"a.h"
+#include"tokeniser.h"
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
@@ -6,8 +7,6 @@
 
 static const char* BANNER = "arraylang (c) 2025 Caitanya Durley";
 static char errorString[100];
-static char* line = NULL;
-static size_t lineLength = 0;
 static k variables[26];
 static unsigned long workspace = 0;
 
@@ -382,7 +381,9 @@ void print(k x) {
 
 // Input parsing
 
-unsigned char parseVerb(char v) {
+unsigned char parseVerb(char* s) {
+    // TODO: verbs of > 1 char
+    char v = s[0];
     // return ix of v in VERBS or 0 if dne
     return (strchr(VERBS, v) ?: VERBS) - VERBS;
 }
@@ -391,7 +392,12 @@ bool isVarName(char c) {
     return c >= 'a' && c <= 'z';
 }
 
-k evalNoun(char c) {
+k evalNoun(char* s) {
+    if (strlen(s) > 1) {
+        sprintf(errorString, "TODO: nouns of > 1 char");
+        return createError(error_nyi);
+    }
+    char c = s[0];
     if (isVarName(c)) {
         k variable = variables[c - 'a'];
         if (variable) {
@@ -409,50 +415,47 @@ k evalNoun(char c) {
     return createInt(c - '0');
 }
 
-k eval(char *s) {
-    char* t = s + 1;
-    char currToken = s[0];
-    if (!*t) {
+k eval(token* tokens, size_t tokenCount) {
+    if (tokenCount == 1) {
         // end of tape => currToken must be a noun
-        return evalNoun(currToken);
+        return evalNoun(tokenToString(tokens[0]));
     }
-    unsigned char verb = parseVerb(currToken);
+    unsigned char verb = parseVerb(tokenToString(tokens[0]));
     if (verb) {
-        k right = eval(t);
+        k right = eval(tokens + 1, tokenCount - 1);
         propogateError(right);
         return consume(right, monadics[verb](right));
     }
-    // currToken must be a noun, and t should be a verb
-    k left = evalNoun(currToken);
+    // tokens[0] must be a noun, and tokens[1] should be a verb
+    k left = evalNoun(tokenToString(tokens[0]));
     propogateError(left);
-    verb = parseVerb(*t);
+    verb = parseVerb(tokenToString(tokens[1]));
     if (!verb) {
-        sprintf(errorString, "Expected verb, got %c", *t);
+        sprintf(errorString, "Expected verb, got %s", tokenToString(tokens[1]));
         return createError(error_parse);
     }
-    t++;
-    if (!*t) {
+    if (tokenCount < 3) {
         // dyadic verb with no right noun
         sprintf(errorString, "Projections unsupported");
         return createError(error_nyi);
     }
-    k right = eval(t);
+    k right = eval(tokens + 2, tokenCount - 2);
     propogateError(right);
     return consume(left, consume(right, dyadics[verb](left, right)));
 }
 
-k evalAssignment(char* s) {
-    char varName = s[0];
-    if (!isVarName(varName)) {
-        sprintf(errorString, "Invalid variable name: %c", varName);
+k evalAssignment(token* tokens, size_t tokenCount) {
+    char* varName = tokenToString(tokens[0]);
+    if (!isVarName(varName[0])) {
+        sprintf(errorString, "Invalid variable name: %s", varName);
         return createError(error_parse);
     }
-    unsigned int varIx = varName - 'a';
-    if (!*(s + 2)) {
-        sprintf(errorString, "No value to assign");
+    unsigned int varIx = varName[0] - 'a';
+    if (tokenCount < 3) {
+        sprintf(errorString, "No value to assign to %s", varName);
         return createError(error_parse);
     }
-    k val = eval(s + 2);
+    k val = eval(tokens + 2, tokenCount - 2);
     propogateError(val);
     incRefcount(val);
     if (variables[varIx]) {
@@ -462,13 +465,13 @@ k evalAssignment(char* s) {
     return val;
 }
 
-bool readline(FILE* stream) {
-    ssize_t num_chars = getline(&line, &lineLength, stream);
+bool readline(FILE* stream, char** lineptr, size_t* n) {
+    ssize_t num_chars = getline(lineptr, n, stream);
     if (num_chars <= 0) {
         return false;
     }
     // clamp the newline
-    line[num_chars - 1] = 0;
+    (*lineptr)[num_chars - 1] = 0;
     return true;
 }
 
@@ -489,18 +492,23 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "Couldn't open %s for reading\n", batchMode ? argv[1] : "stdin");
         return 1;
     }
-    while (batchMode?:write(1, "a) ", 3), readline(stream)) {
-        if (!*line) continue;
-        if (*line == '/') continue;
-        if (0 == strcmp(line, "debug")) {
+    char* line = NULL;
+    size_t lineLength = 0;
+    token* tokens = NULL;
+    size_t tokensCapacity = 0;
+    k result;
+    while (batchMode?:write(1, "a) ", 3), readline(stream, &line, &lineLength)) {
+        size_t tokenCount = tokeniser(line, &tokens, &tokensCapacity);
+        if (!tokenCount) continue;
+        if (tokenToString(tokens[0])[0] == '/') continue;
+        if (0 == strcmp(tokenToString(tokens[0]), "debug")) {
             debug();
             continue;
         }
-        k result;
-        if (line[1] == ':') {
-            result = evalAssignment(line);
+        if (tokenCount >= 2 && 0 == strcmp(tokenToString(tokens[1]), ":")) {
+            result = evalAssignment(tokens, tokenCount);
         } else {
-            result = eval(line);
+            result = eval(tokens, tokenCount);
         }
         print(result);
         decRefcount(result);
