@@ -1,14 +1,22 @@
+#define _DEFAULT_SOURCE
 #include"a.h"
 #include"tokeniser.h"
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
 #include<unistd.h>
+#include<errno.h>
 
 static const char* BANNER = "arraylang (c) 2025 Caitanya Durley";
 static char errorString[100];
-static k variables[26];
 static unsigned long workspace = 0;
+
+struct variables {
+    char** names;
+    k* values;
+    size_t count;
+    size_t capacity;
+};
 
 // Memory management and type wrangling
 
@@ -309,9 +317,9 @@ k equals(k x, k y) {
     return cmp(x, y);
 }
 
-static const char* VERBS = " #-+,=";
-static const k (*monadics[])(k) = {0, count, neg, nyi, enlist, nyi};
-static const k (*dyadics[])(k, k) = {0, take, sub, add, join, equals};
+static const char* VERBS[5] = {"#", "-", "+", ",", "="};
+static const k (*monadics[])(k) = {count, neg, nyi, enlist, nyi};
+static const k (*dyadics[])(k, k) = {take, sub, add, join, equals};
 
 // Output formatting
 
@@ -381,56 +389,53 @@ void print(k x) {
 
 // Input parsing
 
-unsigned char parseVerb(char* s) {
-    // TODO: verbs of > 1 char
-    char v = s[0];
-    // return ix of v in VERBS or 0 if dne
-    return (strchr(VERBS, v) ?: VERBS) - VERBS;
+long findString(const char* needle, const char** haystack, size_t n) {
+    for (long i = 0; i < n; i++) {
+        if (0 == strcmp(needle, haystack[i])) return i;
+    }
+    return -1;
 }
 
-bool isVarName(char c) {
-    return c >= 'a' && c <= 'z';
+bool isValidVarName(token name) {
+    char* s = tokenToString(name);
+    return s[0] >= 'a' && s[0] <= 'z' || s[0] >= 'A' && s[0] <= 'Z';
 }
 
-k evalNoun(char* s) {
-    if (strlen(s) > 1) {
-        sprintf(errorString, "TODO: nouns of > 1 char");
-        return createError(error_nyi);
-    }
-    char c = s[0];
-    if (isVarName(c)) {
-        k variable = variables[c - 'a'];
-        if (variable) {
-            incRefcount(variable);
-            return variable;
-        } else {
-            sprintf(errorString, "%c", c);
-            return createError(error_undefined);
-        }
-    }
-    if (c < '0' || c > '9') {
-        sprintf(errorString, "Expected noun, got %c", c);
+k evalNoun(char* s, struct variables variables) {
+    char* strtolInvalidPtr;
+    errno = 0;
+    long parsedInt = strtol(s, &strtolInvalidPtr, 0);
+    if (errno == 0 && *strtolInvalidPtr == '\0') return createInt(parsedInt);
+    if (strtolInvalidPtr != s) {
+        sprintf(errorString, "Couldn't parse as integer: %s", s);
         return createError(error_parse);
     }
-    return createInt(c - '0');
+    long varIx = findString(s, (const char**)variables.names, variables.count);
+    if (varIx > -1) {
+        k variable = variables.values[varIx];
+        incRefcount(variable);
+        return variable;
+    }
+    strncpy(errorString, s, sizeof(errorString) / sizeof(*errorString));
+    return createError(error_undefined);
 }
 
-k eval(token* tokens, size_t tokenCount) {
+k eval(token* tokens, size_t tokenCount, struct variables variables) {
     if (tokenCount == 1) {
         // end of tape => currToken must be a noun
-        return evalNoun(tokenToString(tokens[0]));
+        return evalNoun(tokenToString(tokens[0]), variables);
     }
-    unsigned char verb = parseVerb(tokenToString(tokens[0]));
-    if (verb) {
-        k right = eval(tokens + 1, tokenCount - 1);
+    long verb = findString(tokenToString(tokens[0]), VERBS, sizeof(VERBS) / sizeof(*VERBS));
+    if (verb > -1) {
+        k right = eval(tokens + 1, tokenCount - 1, variables);
         propogateError(right);
         return consume(right, monadics[verb](right));
     }
     // tokens[0] must be a noun, and tokens[1] should be a verb
-    k left = evalNoun(tokenToString(tokens[0]));
+    k left = evalNoun(tokenToString(tokens[0]), variables);
     propogateError(left);
-    verb = parseVerb(tokenToString(tokens[1]));
-    if (!verb) {
+    verb = findString(tokenToString(tokens[1]), VERBS, sizeof(VERBS) / sizeof(*VERBS));
+    if (verb == -1) {
         sprintf(errorString, "Expected verb, got %s", tokenToString(tokens[1]));
         return createError(error_parse);
     }
@@ -439,29 +444,38 @@ k eval(token* tokens, size_t tokenCount) {
         sprintf(errorString, "Projections unsupported");
         return createError(error_nyi);
     }
-    k right = eval(tokens + 2, tokenCount - 2);
+    k right = eval(tokens + 2, tokenCount - 2, variables);
     propogateError(right);
     return consume(left, consume(right, dyadics[verb](left, right)));
 }
 
-k evalAssignment(token* tokens, size_t tokenCount) {
-    char* varName = tokenToString(tokens[0]);
-    if (!isVarName(varName[0])) {
-        sprintf(errorString, "Invalid variable name: %s", varName);
+k evalAssignment(token* tokens, size_t tokenCount, struct variables* variables) {
+    token varName = tokens[0];
+    if (!isValidVarName(varName)) {
+        sprintf(errorString, "Invalid variable name: %s", tokenToString(varName));
         return createError(error_parse);
     }
-    unsigned int varIx = varName[0] - 'a';
+    long varIx = findString(tokenToString(varName), (const char**) variables->names, variables->count);
     if (tokenCount < 3) {
-        sprintf(errorString, "No value to assign to %s", varName);
+        sprintf(errorString, "No value to assign to %s", tokenToString(varName));
         return createError(error_parse);
     }
-    k val = eval(tokens + 2, tokenCount - 2);
+    k val = eval(tokens + 2, tokenCount - 2, *variables);
     propogateError(val);
     incRefcount(val);
-    if (variables[varIx]) {
-        decRefcount(variables[varIx]);
+    if (varIx > -1) {
+        decRefcount(variables->values[varIx]);
+    } else {
+        if (variables->count >= variables->capacity) {
+            variables->capacity *= 2;
+            variables->names = reallocarray(variables->names, variables->capacity, sizeof(*variables->names));
+            variables->values = reallocarray(variables->values, variables->capacity, sizeof(*variables->values));
+        }
+        varIx = variables->count++;
+        variables->names[varIx] = calloc(1 + strlen(tokenToString(varName)), sizeof(char));
+        strcpy(variables->names[varIx], tokenToString(varName));
     }
-    variables[varIx] = val;
+    variables->values[varIx] = val;
     return val;
 }
 
@@ -475,13 +489,24 @@ bool readline(FILE* stream, char** lineptr, size_t* n) {
     return true;
 }
 
-void debug(void) {
+void debug(struct variables variables) {
     printf("Workspace: %lu\n", workspace);
-    for (int i = 0; i < 26; i++) {
-        if (variables[i]) {
-            printf("%c: type=%d, refcount=%u\n", 'a'+i, variables[i]->type, variables[i]->refcount);
-        }
+    for (size_t i = 0; i < variables.count; i++) {
+        printf("%s: type=%d, refcount=%u\n",
+            variables.names[i],
+            variables.values[i]->type,
+            variables.values[i]->refcount
+        );
     }
+}
+
+struct variables initVariables(size_t capacity) {
+    struct variables out;
+    out.names = calloc(capacity, sizeof(char*));
+    out.values = calloc(capacity, sizeof(k));
+    out.count = 0;
+    out.capacity = capacity;
+    return out;
 }
 
 int main(int argc, char* argv[]) {
@@ -496,19 +521,20 @@ int main(int argc, char* argv[]) {
     size_t lineLength = 0;
     token* tokens = NULL;
     size_t tokensCapacity = 0;
+    struct variables variables = initVariables(2);
     k result;
     while (batchMode?:write(1, "a) ", 3), readline(stream, &line, &lineLength)) {
         size_t tokenCount = tokeniser(line, &tokens, &tokensCapacity);
         if (!tokenCount) continue;
         if (tokenToString(tokens[0])[0] == '/') continue;
         if (0 == strcmp(tokenToString(tokens[0]), "debug")) {
-            debug();
+            debug(variables);
             continue;
         }
         if (tokenCount >= 2 && 0 == strcmp(tokenToString(tokens[1]), ":")) {
-            result = evalAssignment(tokens, tokenCount);
+            result = evalAssignment(tokens, tokenCount, &variables);
         } else {
-            result = eval(tokens, tokenCount);
+            result = eval(tokens, tokenCount, variables);
         }
         print(result);
         decRefcount(result);

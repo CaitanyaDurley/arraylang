@@ -9,12 +9,11 @@ char* tokenToString(token t) {
     return t.token;
 }
 
-bool isValidTokenStart(char c) {
-    return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z';
-}
-
 bool isValidTokenContinuation(char c) {
-    return isValidTokenStart(c) || c >= '0' && c <= '9' || c == '_';
+    return c >= 'a' && c <= 'z' ||
+        c >= 'A' && c <= 'Z' ||
+        c >= '0' && c <= '9' ||
+        c == '_';
 }
 
 token allocateToken(size_t capacity) {
@@ -35,6 +34,7 @@ size_t tokeniser(char* s, token** tokensptr, size_t* n) {
         *tokensptr = calloc(1, sizeof(token));
     }
     size_t tokenIx = 0;
+    size_t tokenLength;
     while (*s) {
         if (*s == ' ') {
             s++;
@@ -48,15 +48,14 @@ size_t tokeniser(char* s, token** tokensptr, size_t* n) {
         if (!tokens[tokenIx].capacity) {
             tokens[tokenIx] = allocateToken(2);
         };
-        if (!isValidTokenStart(*s)) {
-            sprintf(tokens[tokenIx++].token, "%c", *s++);
-            continue;
+        tokenLength = 1;
+        if (isValidTokenContinuation(*s++)) {
+            // how long is this token?
+            while (isValidTokenContinuation(*s)) {
+                tokenLength++;
+                s++;
+            };
         }
-        size_t tokenLength = 0;
-        while (isValidTokenContinuation(*s)) {
-            tokenLength++;
-            s++;
-        };
         token t = tokens[tokenIx];
         if (t.capacity < tokenLength + 1) resizeToken(&t, tokenLength + 1);
         memcpy(t.token, s - tokenLength, tokenLength);
