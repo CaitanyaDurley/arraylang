@@ -317,9 +317,11 @@ k equals(k x, k y) {
     return cmp(x, y);
 }
 
-static const char* VERBS[5] = {"#", "-", "+", ",", "="};
-static const k (*monadics[])(k) = {count, neg, nyi, enlist, nyi};
-static const k (*dyadics[])(k, k) = {take, sub, add, join, equals};
+static const char* MONADIC_VERB_NAMES[] = {"count", "neg", "enlist"};
+static const k (*MONADIC_VERB_FUNCS[])(k) = {count, neg, enlist};
+static const char* DYADIC_VERB_NAMES[] = {"take", "+", "-", "=", "join"};
+static const k (*DYADIC_VERB_FUNCS[])(k, k) = {take, add, sub, equals, join};
+
 
 // Output formatting
 
@@ -425,18 +427,16 @@ k eval(token* tokens, size_t tokenCount, struct variables variables) {
         // end of tape => currToken must be a noun
         return evalNoun(tokenToString(tokens[0]), variables);
     }
-    long verb = findString(tokenToString(tokens[0]), VERBS, sizeof(VERBS) / sizeof(*VERBS));
+    long verb = findString(tokenToString(tokens[0]), MONADIC_VERB_NAMES, arrLength(MONADIC_VERB_NAMES));
     if (verb > -1) {
         k right = eval(tokens + 1, tokenCount - 1, variables);
         propogateError(right);
-        return consume(right, monadics[verb](right));
+        return consume(right, MONADIC_VERB_FUNCS[verb](right));
     }
     // tokens[0] must be a noun, and tokens[1] should be a verb
-    k left = evalNoun(tokenToString(tokens[0]), variables);
-    propogateError(left);
-    verb = findString(tokenToString(tokens[1]), VERBS, sizeof(VERBS) / sizeof(*VERBS));
+    verb = findString(tokenToString(tokens[1]), DYADIC_VERB_NAMES, arrLength(DYADIC_VERB_NAMES));
     if (verb == -1) {
-        sprintf(errorString, "Expected verb, got %s", tokenToString(tokens[1]));
+        sprintf(errorString, "Expected verb, got \"%s\"", tokenToString(tokens[1]));
         return createError(error_parse);
     }
     if (tokenCount < 3) {
@@ -444,9 +444,11 @@ k eval(token* tokens, size_t tokenCount, struct variables variables) {
         sprintf(errorString, "Projections unsupported");
         return createError(error_nyi);
     }
+    k left = evalNoun(tokenToString(tokens[0]), variables);
+    propogateError(left);
     k right = eval(tokens + 2, tokenCount - 2, variables);
     propogateError(right);
-    return consume(left, consume(right, dyadics[verb](left, right)));
+    return consume(left, consume(right, DYADIC_VERB_FUNCS[verb](left, right)));
 }
 
 k evalAssignment(token* tokens, size_t tokenCount, struct variables* variables) {

@@ -43,3 +43,5 @@ typedef struct k {
 #define swap(x, y) k tmp = x; x = y; y = tmp
 
 #define unreachable puts("Sorry, a fatal error has been encountered and this process will now exit"); exit(1)
+
+#define arrLength(x) sizeof(x) / sizeof(*x)
